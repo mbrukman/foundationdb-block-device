@@ -15,7 +15,6 @@ const (
 	MetadataDirectoryName = "metadata"
 	DataDirectoryName     = "data"
 	BlockSizeKey          = "bs"
-	UsageKey              = "us"
 )
 
 type FDBArray struct {
@@ -90,38 +89,48 @@ func (array FDBArray) readSingleBlockAsync(blockID uint64, tx fdb.ReadTransactio
 	return tx.Get(array.data.Pack(tuple.Tuple{blockID}))
 }
 
-func (array FDBArray) Read(read []byte, offset uint64, tx fdb.ReadTransaction) error {
+func (array FDBArray) Read(read []byte, offset uint64) error {
 	blockSize := uint64(array.blockSize)
 	firstBlock := offset / blockSize
 	blockOffset := (offset % blockSize)
 	length := uint64(len(read))
 	lastBlock := (offset + length) / blockSize
 
-	if length == blockSize && blockOffset == 0 {
-		value := array.readSingleBlockAsync(firstBlock, tx).MustGet()
+	_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
 
-		copy(read, value)
-		return nil
+		if length == blockSize && blockOffset == 0 {
+			value := array.readSingleBlockAsync(firstBlock, tx).MustGet()
 
-	} else {
-		iterator := tx.GetRange(
-			fdb.KeyRange{Begin: array.data.Pack(tuple.Tuple{firstBlock}), End: array.data.Pack(tuple.Tuple{lastBlock + 1})},
-			fdb.RangeOptions{Limit: 0, Mode: fdb.StreamingModeWantAll, Reverse: false}).Iterator()
+			copy(read, value)
 
-		for iterator.Advance() {
-			kv := iterator.MustGet()
+		} else {
+			iterator := tx.GetRange(
+				fdb.KeyRange{Begin: array.data.Pack(tuple.Tuple{firstBlock}), End: array.data.Pack(tuple.Tuple{lastBlock + 1})},
+				fdb.RangeOptions{Limit: 0, Mode: fdb.StreamingModeWantAll, Reverse: false}).Iterator()
 
-			tuple, err := array.data.Unpack(kv.Key)
-			if err != nil {
-				log.Fatal(err)
-				return err
+			for iterator.Advance() {
+				kv := iterator.MustGet()
+
+				tuple, err := array.data.Unpack(kv.Key)
+				if err != nil {
+					log.Fatal(err)
+					return nil, err
+				}
+
+				blockID := uint64(tuple[0].(int64))
+				buffer := make([]byte, blockSize)
+				copy(buffer, kv.Value)
+				copyBlock(read, firstBlock, blockOffset, lastBlock, buffer, blockID, blockSize)
 			}
 
-			blockID := tuple[0].(uint64)
-			copyBlock(read, firstBlock, blockOffset, lastBlock, kv.Value, blockID, blockSize)
 		}
-		return nil
+		return
+	})
+
+	if err != nil {
+		return err
 	}
+	return nil
 }
 
 func copyBlock(read []byte, firstBlock uint64, blockOffset uint64, lastBlock uint64, currentValue []byte, blockID uint64, blockSize uint64) {
@@ -132,12 +141,12 @@ func copyBlock(read []byte, firstBlock uint64, blockOffset uint64, lastBlock uin
 		firstBlockLength := uint64(math.Min(float64(shift), float64(len(read))))
 		copy(read[0:firstBlockLength], currentValue[blockOffset:blockOffset+firstBlockLength])
 	} else {
-		position := blockPosition - blockSize + shift
+		position := int(blockPosition - blockSize + shift)
 		if blockID == lastBlock {
-			lastLength := uint64(len(read)) - position
+			lastLength := len(read) - position
 			copy(read[position:position+lastLength], currentValue[0:lastLength])
 		} else {
-			copy(read[position:position+blockSize], currentValue[0:blockSize])
+			copy(read[position:position+int(blockSize)], currentValue[0:int(blockSize)])
 		}
 	}
 }
@@ -178,10 +187,6 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 			maybeLastBlockRead = array.readSingleBlockAsync(lastBlock, tx)
 		}
 
-		lengthBytes := make([]byte, 8)
-		binary.LittleEndian.PutUint64(lengthBytes, length)
-		tx.Add(array.metadata.Pack(tuple.Tuple{UsageKey}), lengthBytes)
-
 		// While first and last blocks are being fetched, let's set the middle blocks
 		if lastBlock > firstBlock {
 			// blocks in the middle
@@ -200,8 +205,10 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 				tx.Set(lastBlockKey, write[position:position+blockSize])
 			} else {
 				lastBlockBytes := maybeLastBlockRead.MustGet()
-				copy(lastBlockBytes, write[position:position+lastBlockLength])
-				tx.Set(lastBlockKey, lastBlockBytes)
+				buf := make([]byte, blockSize)
+				copy(buf, lastBlockBytes)
+				copy(buf, write[position:position+lastBlockLength])
+				tx.Set(lastBlockKey, buf)
 			}
 		}
 
@@ -209,9 +216,11 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 		if isFirstBlockPartial(blockOffset, length, blockSize) {
 			// Only need to do this if the first block is partial
 			readBytes := maybeFirstBlockRead.MustGet()
+			buf := make([]byte, blockSize)
+			copy(buf, readBytes)
 			writeLength := uint64(math.Min(float64(length), float64(shift)))
-			copy(readBytes[blockOffset:blockOffset+writeLength], write[0:writeLength])
-			tx.Set(firstBlockKey, readBytes)
+			copy(buf[blockOffset:blockOffset+writeLength], write[0:writeLength])
+			tx.Set(firstBlockKey, buf)
 		} else {
 			// In this case copy the full first block blindly
 			tx.Set(firstBlockKey, write[0:blockSize])
@@ -232,16 +241,12 @@ func (array FDBArray) Clear() {
 }
 
 func (array FDBArray) Usage() (uint64, error) {
-	usage, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
-		bytes := tx.Get(array.metadata.Pack(tuple.Tuple{UsageKey})).MustGet()
-		ret = binary.LittleEndian.Uint64(bytes)
-		return
-	})
 
-	if err != nil {
-		log.Fatal(err)
-		return 0, err
-	}
+	// TODO implement with roaring bitset
 
-	return usage.(uint64), nil
+	return 0, nil
+}
+
+func (array FDBArray) Delete() {
+	array.subspace.Remove(array.database, nil)
 }
