@@ -14,6 +14,14 @@
   revision = "48d84faa3e6174deb7f852ef4d314f7bad1dfa57"
   version = "6.0.18"
 
+[[projects]]
+  branch = "master"
+  digest = "1:020df8271d475e36c7c0a6a68a197aa038c0b79d382a01d8bd6b806162c3dbce"
+  name = "github.com/meln1k/buse-go"
+  packages = ["buse"]
+  pruneopts = "UT"
+  revision = "93366242118a70bcf7390de7f44dcb006e4ac318"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
@@ -21,6 +29,7 @@
     "github.com/apple/foundationdb/bindings/go/src/fdb",
     "github.com/apple/foundationdb/bindings/go/src/fdb/directory",
     "github.com/apple/foundationdb/bindings/go/src/fdb/tuple",
+    "github.com/meln1k/buse-go/buse",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

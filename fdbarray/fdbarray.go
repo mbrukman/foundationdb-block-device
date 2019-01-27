@@ -28,7 +28,7 @@ type FDBArray struct {
 
 // Create a new array
 func Create(database fdb.Database, name string, blockSize uint32) FDBArray {
-	subspace, err := directory.Create(database, []string{FDBArrayDirectoryName}, nil)
+	subspace, err := directory.Create(database, []string{FDBArrayDirectoryName, name}, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func Create(database fdb.Database, name string, blockSize uint32) FDBArray {
 
 // Open an already created array
 func Open(database fdb.Database, name string) FDBArray {
-	subspace, err := directory.Open(database, []string{FDBArrayDirectoryName}, nil)
+	subspace, err := directory.Open(database, []string{FDBArrayDirectoryName, name}, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -240,6 +240,7 @@ func (array FDBArray) Clear() {
 	})
 }
 
+// Usage of the array
 func (array FDBArray) Usage() (uint64, error) {
 
 	// TODO implement with roaring bitset
@@ -247,6 +248,7 @@ func (array FDBArray) Usage() (uint64, error) {
 	return 0, nil
 }
 
+// Delete the array
 func (array FDBArray) Delete() {
 	array.subspace.Remove(array.database, nil)
 }
