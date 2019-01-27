@@ -72,7 +72,7 @@ func main() {
 	// Open the default database from the system cluster
 	db := fdb.MustOpenDefault()
 	size := uint64(1024 * 1024 * 1024) // 1024
-	deviceExp := OpenStorageVolume(db, "nbdftw")
+	deviceExp := CreateStorageVolume(db, "nbdftw", 4096)
 	device, err := buse.CreateDevice(args[0], size, deviceExp)
 	if err != nil {
 		fmt.Printf("Cannot create device: %s\n", err)
