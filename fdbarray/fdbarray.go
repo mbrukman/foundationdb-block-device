@@ -15,6 +15,7 @@ const (
 	MetadataDirectoryName = "metadata"
 	DataDirectoryName     = "data"
 	BlockSizeKey          = "bs"
+	SizeKey               = "size"
 )
 
 type FDBArray struct {
@@ -24,10 +25,15 @@ type FDBArray struct {
 	data     directory.DirectorySubspace
 
 	blockSize uint32
+	size      uint64
 }
 
 // Create a new array
-func Create(database fdb.Database, name string, blockSize uint32) FDBArray {
+// database - instance of the database
+// name - name of the array
+// blockSize - size of the block in bytes
+// size - size of the volume in bytes
+func Create(database fdb.Database, name string, blockSize uint32, size uint64) FDBArray {
 	subspace, err := directory.Create(database, []string{FDBArrayDirectoryName, name}, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -47,13 +53,17 @@ func Create(database fdb.Database, name string, blockSize uint32) FDBArray {
 		bs := make([]byte, 4)
 		binary.BigEndian.PutUint32(bs, blockSize)
 		tr.Set(metadata.Pack(tuple.Tuple{BlockSizeKey}), bs)
+
+		s := make([]byte, 8)
+		binary.BigEndian.PutUint64(s, size)
+		tr.Set(metadata.Pack(tuple.Tuple{SizeKey}), s)
 		return
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fdbArray := FDBArray{database, subspace, metadata, data, blockSize}
+	fdbArray := FDBArray{database, subspace, metadata, data, blockSize, size}
 
 	return fdbArray
 }
@@ -80,7 +90,12 @@ func Open(database fdb.Database, name string) FDBArray {
 		return binary.BigEndian.Uint32(bytes), nil
 	})
 
-	fdbArray := FDBArray{database, subspace, metadata, data, blockSize.(uint32)}
+	size, err := database.Transact(func(tr fdb.Transaction) (ret interface{}, err error) {
+		bytes := tr.Get(metadata.Pack(tuple.Tuple{SizeKey})).MustGet()
+		return binary.BigEndian.Uint64(bytes), nil
+	})
+
+	fdbArray := FDBArray{database, subspace, metadata, data, blockSize.(uint32), size.(uint64)}
 
 	return fdbArray
 }
@@ -251,4 +266,9 @@ func (array FDBArray) Usage() (uint64, error) {
 // Delete the array
 func (array FDBArray) Delete() {
 	array.subspace.Remove(array.database, nil)
+}
+
+// Size of the volume in bytes
+func (array FDBArray) Size() uint64 {
+	return array.size
 }
