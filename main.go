@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 
+	"github.com/alecthomas/units"
+
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 
 	"github.com/meln1k/buse-go/buse"
@@ -83,10 +85,10 @@ func main() {
 					Usage: "size of a single block in bytes, must be a power of 2 and not more than 65536",
 					Value: 4096,
 				},
-				cli.Uint64Flag{
+				cli.StringFlag{
 					Name:  "s, size",
-					Usage: "size of the volume in megabytes",
-					Value: 512,
+					Usage: "size of the volume, e.g. 50GB. Valid units are KB, MB, GB, TB",
+					Value: "512MB",
 				},
 			},
 			Action: func(c *cli.Context) error {
@@ -114,9 +116,12 @@ func main() {
 
 				fdb.MustAPIVersion(600)
 				db := fdb.MustOpenDefault()
-				size := (c.Uint64("size") * 1024 * 1024)
+				size, sizeErr := units.ParseStrictBytes(c.String("size"))
+				if sizeErr != nil {
+					return cli.NewExitError("volume size is invalid", 1)
+				}
 				name := c.Args().Get(0)
-				CreateStorageVolume(db, name, uint32(blockSize), size)
+				CreateStorageVolume(db, name, uint32(blockSize), uint64(size))
 				return nil
 			},
 		},
