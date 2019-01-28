@@ -16,11 +16,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:020df8271d475e36c7c0a6a68a197aa038c0b79d382a01d8bd6b806162c3dbce"
+  digest = "1:a067f49ff1ac7d94e11876d371e38606f6d2831391ba59d62529f80322769b78"
   name = "github.com/meln1k/buse-go"
   packages = ["buse"]
   pruneopts = "UT"
-  revision = "93366242118a70bcf7390de7f44dcb006e4ac318"
+  revision = "9d72deab4abc8e04da5820d13722dcf512a1afa0"
 
 [[projects]]
   digest = "1:b24d38b282bacf9791408a080f606370efa3d364e4b5fd9ba0f7b87786d3b679"

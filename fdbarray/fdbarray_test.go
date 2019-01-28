@@ -18,7 +18,7 @@ func setup() {
 	// Open the default database from the system cluster
 	db := fdb.MustOpenDefault()
 
-	fdbArray = Create(db, "fdbarray-test", 512)
+	fdbArray = Create(db, "fdbarray-test", 512, 1024)
 }
 
 func cleanup() {
@@ -39,7 +39,24 @@ func TestNotAlignedReadWrite(t *testing.T) {
 
 	read := make([]byte, 12345)
 
-	fdbArray.Read(read, 2)
+	fdbArray.Read(read, 10000)
+
+	if !bytes.Equal(write, read) {
+		t.Errorf("Write is not equal to read")
+	}
+}
+
+func TestAlignedReadWrite(t *testing.T) {
+	write := make([]byte, 12345)
+	for i := 0; i < 12345; i++ {
+		write[i] = byte(i)
+	}
+
+	fdbArray.Write(write, 0)
+
+	read := make([]byte, 12345)
+
+	fdbArray.Read(read, 0)
 
 	if !bytes.Equal(write, read) {
 		t.Errorf("Write is not equal to read")

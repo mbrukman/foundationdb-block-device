@@ -31,13 +31,13 @@ func OpenStorageVolume(database fdb.Database, name string) FdbStorage {
 }
 
 func (d FdbStorage) ReadAt(p []byte, off uint64) error {
-	d.array.Read(p, off)
-	return nil
+	err := d.array.Read(p, off)
+	return err
 }
 
 func (d FdbStorage) WriteAt(p []byte, off uint64) error {
-	d.array.Write(p, off)
-	return nil
+	err := d.array.Write(p, off)
+	return err
 }
 
 func (d FdbStorage) Disconnect() {
@@ -75,8 +75,7 @@ func main() {
 	app.Commands = []cli.Command{
 		{
 			Name:      "create",
-			Aliases:   []string{"c"},
-			Usage:     "Create a new volume",
+			Usage:     "Creates a new volume",
 			ArgsUsage: "[volume name]",
 			Flags: []cli.Flag{
 				cli.IntFlag{
@@ -122,10 +121,16 @@ func main() {
 			},
 		},
 		{
-			Name:      "open",
-			Aliases:   []string{"o"},
-			Usage:     "opens the volume at the provided device",
+			Name:      "connect",
+			Usage:     "Connects the specified volume at the provided device",
 			ArgsUsage: "[volume name] [device name]",
+			Flags: []cli.Flag{
+				cli.IntFlag{
+					Name:  "par",
+					Usage: "parallelism when calling foundationdb",
+					Value: 64,
+				},
+			},
 			Action: func(c *cli.Context) error {
 				if c.NArg() != 2 {
 					return cli.NewExitError("volume name and device must me specified", 1)
@@ -138,9 +143,11 @@ func main() {
 				// Open the default database from the system cluster
 				db := fdb.MustOpenDefault()
 
+				parallelism := c.Int("par")
+
 				deviceExp := OpenStorageVolume(db, volumeName)
 
-				device, err := buse.CreateDevice(blockDeviceName, deviceExp.Size(), deviceExp)
+				device, err := buse.CreateDevice(blockDeviceName, deviceExp.Size(), deviceExp, parallelism)
 				if err != nil {
 					fmt.Printf("Cannot create device: %s\n", err)
 					os.Exit(1)
@@ -168,40 +175,5 @@ func main() {
 	err := app.Run(os.Args)
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	// flag.Usage = usage
-	// flag.Parse()
-	// args := flag.Args()
-	// if len(args) < 1 {
-	// 	usage()
-	// }
-
-	if false {
-		// Different API versions may expose different runtime behaviors.
-		fdb.MustAPIVersion(600)
-
-		// Open the default database from the system cluster
-		db := fdb.MustOpenDefault()
-		size := uint64(1024 * 1024 * 1024) // 1024
-		deviceExp := CreateStorageVolume(db, "nbdftw", 4096, size)
-		device, err := buse.CreateDevice("/dev/nbd0", size, deviceExp)
-		if err != nil {
-			fmt.Printf("Cannot create device: %s\n", err)
-			os.Exit(1)
-		}
-		sig := make(chan os.Signal)
-		signal.Notify(sig, os.Interrupt)
-		go func() {
-			if err := device.Connect(); err != nil {
-				log.Printf("Buse device stopped with error: %s", err)
-			} else {
-				log.Println("Buse device stopped gracefully.")
-			}
-		}()
-		<-sig
-		// Received SIGTERM, cleanup
-		fmt.Println("SIGINT, disconnecting...")
-		device.Disconnect()
 	}
 }

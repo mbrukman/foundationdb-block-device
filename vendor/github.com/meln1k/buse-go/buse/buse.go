@@ -8,7 +8,6 @@ import (
 	"os"
 	"sync"
 	"syscall"
-	"unsafe"
 )
 
 func ioctl(fd, op, arg uintptr) {
@@ -92,7 +91,7 @@ func opDeviceTrim(driver BuseInterface, fp *os.File, mutex *sync.Mutex, chunk []
 func (bd *BuseDevice) startNBDClient() {
 	ioctl(bd.deviceFp.Fd(), NBD_SET_SOCK, uintptr(bd.socketPair[1]))
 	// The call below may fail on some systems (if flags unset), could be ignored
-	ioctl(bd.deviceFp.Fd(), NBD_SET_FLAGS, NBD_FLAG_SEND_TRIM)
+	ioctl(bd.deviceFp.Fd(), NBD_SET_FLAGS, NBD_FLAG_SEND_TRIM|NBD_FLAG_SEND_FLUSH)
 	// The following call will block until the client disconnects
 	log.Println("Starting NBD client...")
 	go ioctl(bd.deviceFp.Fd(), NBD_DO_IT, 0)
@@ -131,6 +130,12 @@ func nbdReplyHeader(handle uint64, error uint32) []byte {
 	return buf
 }
 
+type workerJob struct {
+	jobType uint32
+	chunk   []byte
+	request *nbdRequest
+}
+
 // Connect connects a BuseDevice to an actual device file
 // and starts handling requests. It does not return until it's done serving requests.
 func (bd *BuseDevice) Connect() error {
@@ -145,11 +150,25 @@ func (bd *BuseDevice) Connect() error {
 	fp := os.NewFile(uintptr(bd.socketPair[0]), "unix")
 	mutex := &sync.Mutex{}
 
+	jobs := make(chan workerJob, bd.parallelism)
+
+	worker := func(requests <-chan workerJob) {
+		for job := range requests {
+			bd.op[job.jobType](bd.driver, fp, mutex, job.chunk, job.request)
+		}
+	}
+
+	for i := 0; i < bd.parallelism; i++ {
+		go worker(jobs)
+	}
+
+	log.Printf("started client with %d workers", bd.parallelism)
+
 	// Start handling requests
 	for true {
 		request := nbdRequest{}
 		// NOTE: a struct in go has 4 extra bytes...
-		buf := make([]byte, unsafe.Sizeof(request))
+		buf := make([]byte, 28)
 		if _, err := fp.Read(buf[0:28]); err != nil {
 			return fmt.Errorf("NBD client stopped: %s", err)
 		}
@@ -173,14 +192,19 @@ func (bd *BuseDevice) Connect() error {
 				return fmt.Errorf("Fatal error, cannot read request packet: %s", err)
 			}
 		}
+		job := workerJob{
+			jobType: request.Type,
+			chunk:   chunk,
+			request: &request,
+		}
 		// asynchronously handle the rest
-		go bd.op[request.Type](bd.driver, fp, mutex, chunk, &request)
+		jobs <- job
 	}
 	return nil
 }
 
-func CreateDevice(device string, size uint64, buseDriver BuseInterface) (*BuseDevice, error) {
-	buseDevice := &BuseDevice{size: size, device: device, driver: buseDriver}
+func CreateDevice(device string, size uint64, buseDriver BuseInterface, parallelism int) (*BuseDevice, error) {
+	buseDevice := &BuseDevice{size: size, device: device, driver: buseDriver, parallelism: parallelism}
 	sockPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		return nil, fmt.Errorf("Call to socketpair failed: %s", err)

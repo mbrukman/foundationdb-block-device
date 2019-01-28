@@ -111,7 +111,7 @@ func (array FDBArray) Read(read []byte, offset uint64) error {
 	length := uint64(len(read))
 	lastBlock := (offset + length) / blockSize
 
-	_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+	_, err := array.database.ReadTransact(func(tx fdb.ReadTransaction) (ret interface{}, err error) {
 
 		if length == blockSize && blockOffset == 0 {
 			value := array.readSingleBlockAsync(firstBlock, tx).MustGet()
@@ -143,6 +143,7 @@ func (array FDBArray) Read(read []byte, offset uint64) error {
 	})
 
 	if err != nil {
+		log.Fatal(err)
 		return err
 	}
 	return nil
@@ -179,15 +180,26 @@ func isLastBlockPartial(lastBlock uint64, firstBlock uint64, length uint64, bloc
 	return false
 }
 
+func isNotAlignedWrite(blockOffset uint64, length uint64, lastBlockLength uint64, blockSize uint64) bool {
+	return blockOffset > 0 || (blockOffset == 0 && length < blockSize) || (lastBlockLength != blockSize)
+}
+
 func (array FDBArray) Write(write []byte, offset uint64) error {
 	blockSize := uint64(array.blockSize)
 	length := uint64(len(write))
 	firstBlock := offset / blockSize
-	lastBlock := (offset + length) / blockSize
+	lastBlock := (offset + length - 1) / blockSize
 	blockOffset := (offset % blockSize)
 	shift := blockSize - blockOffset
 
-	array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+	lastBlockPosition := ((lastBlock-firstBlock-1)*blockSize + shift)
+	lastBlockLength := length - lastBlockPosition
+
+	if isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
+		log.Println("Non aligned write!")
+	}
+
+	_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
 
 		firstBlockKey := array.data.Pack(tuple.Tuple{firstBlock})
 
@@ -212,17 +224,15 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 				tx.Set(key, write[position:position+blockSize])
 			}
 
-			position := ((lastBlock-firstBlock-1)*blockSize + shift)
-			lastBlockLength := length - position
 			lastBlockKey := array.data.Pack(tuple.Tuple{lastBlock})
 			// If the last block is a complete block we don't need to read
 			if lastBlockLength == blockSize {
-				tx.Set(lastBlockKey, write[position:position+blockSize])
+				tx.Set(lastBlockKey, write[lastBlockPosition:lastBlockPosition+blockSize])
 			} else {
 				lastBlockBytes := maybeLastBlockRead.MustGet()
 				buf := make([]byte, blockSize)
 				copy(buf, lastBlockBytes)
-				copy(buf, write[position:position+lastBlockLength])
+				copy(buf, write[lastBlockPosition:lastBlockPosition+lastBlockLength])
 				tx.Set(lastBlockKey, buf)
 			}
 		}
@@ -243,6 +253,11 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 
 		return
 	})
+
+	if err != nil {
+		log.Fatal(err)
+		return err
+	}
 
 	return nil
 }
