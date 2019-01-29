@@ -100,6 +100,26 @@ func Open(database fdb.Database, name string) FDBArray {
 	return fdbArray
 }
 
+type ArrayDescription struct {
+	VolumeName string
+	Size       uint64
+	BlockSize  uint32
+}
+
+func List(database fdb.Database) []ArrayDescription {
+	list, _ := directory.List(database, []string{FDBArrayDirectoryName})
+	result := make([]ArrayDescription, len(list))
+	for i, name := range list {
+		array := Open(database, name)
+		result[i] = ArrayDescription{
+			VolumeName: name,
+			Size:       array.size,
+			BlockSize:  array.blockSize,
+		}
+	}
+	return result
+}
+
 func (array FDBArray) readSingleBlockAsync(blockID uint64, tx fdb.ReadTransaction) fdb.FutureByteSlice {
 	return tx.Get(array.data.Pack(tuple.Tuple{blockID}))
 }
@@ -286,4 +306,8 @@ func (array FDBArray) Delete() {
 // Size of the volume in bytes
 func (array FDBArray) Size() uint64 {
 	return array.size
+}
+
+func (array FDBArray) BlockSize() uint32 {
+	return array.blockSize
 }

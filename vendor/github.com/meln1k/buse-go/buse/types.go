@@ -65,12 +65,11 @@ type BuseInterface interface {
 }
 
 type BuseDevice struct {
-	size        uint64
-	device      string
-	driver      BuseInterface
-	deviceFp    *os.File
-	socketPair  [2]int
-	op          [5]func(driver BuseInterface, fp *os.File, writeMutex *sync.Mutex, chunk []byte, request *nbdRequest) error
-	disconnect  chan int
-	parallelism int
+	size       uint64
+	device     string
+	driver     BuseInterface
+	deviceFp   *os.File
+	socketPair [2]int
+	op         [5]func(driver BuseInterface, fp *os.File, writeMutex *sync.Mutex, chunk []byte, request *nbdRequest) error
+	disconnect chan int
 }

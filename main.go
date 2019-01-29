@@ -13,6 +13,8 @@ import (
 	"github.com/meln1k/buse-go/buse"
 	"github.com/meln1k/foundationdb-block-device/fdbarray"
 
+	"github.com/dustin/go-humanize"
+
 	"github.com/urfave/cli"
 )
 
@@ -58,6 +60,10 @@ func (d FdbStorage) Trim(off uint64, length uint32) error {
 
 func (d FdbStorage) Size() uint64 {
 	return d.array.Size()
+}
+
+func (d FdbStorage) BlockSize() int32 {
+	return int32(d.array.BlockSize())
 }
 
 // func usage() {
@@ -111,7 +117,7 @@ func main() {
 				_, blockSizeValid := allowedBlockSizes[blockSize]
 
 				if !blockSizeValid {
-					return cli.NewExitError("blockSize must be a power of 2 but no more than 65536", 1)
+					return cli.NewExitError("blockSize must be a power of 2 but not more than 65536", 1)
 				}
 
 				fdb.MustAPIVersion(600)
@@ -126,16 +132,27 @@ func main() {
 			},
 		},
 		{
+			Name:  "list",
+			Usage: "Lists all volumes",
+			Action: func(c *cli.Context) error {
+
+				fdb.MustAPIVersion(600)
+				db := fdb.MustOpenDefault()
+
+				description := fdbarray.List(db)
+
+				fmt.Printf(" %-16s %-10s %s \n", "name", "blocksize", "size")
+				for _, d := range description {
+					fmt.Printf(" %-16s %-10d %s \n", d.VolumeName, d.BlockSize, humanize.Bytes(d.Size))
+				}
+
+				return nil
+			},
+		},
+		{
 			Name:      "connect",
 			Usage:     "Connects the specified volume at the provided device",
 			ArgsUsage: "[volume name] [device name]",
-			Flags: []cli.Flag{
-				cli.IntFlag{
-					Name:  "par",
-					Usage: "parallelism when calling foundationdb",
-					Value: 64,
-				},
-			},
 			Action: func(c *cli.Context) error {
 				if c.NArg() != 2 {
 					return cli.NewExitError("volume name and device must me specified", 1)
@@ -148,11 +165,9 @@ func main() {
 				// Open the default database from the system cluster
 				db := fdb.MustOpenDefault()
 
-				parallelism := c.Int("par")
-
 				deviceExp := OpenStorageVolume(db, volumeName)
 
-				device, err := buse.CreateDevice(blockDeviceName, deviceExp.Size(), deviceExp, parallelism)
+				device, err := buse.CreateDevice(blockDeviceName, deviceExp.BlockSize(), deviceExp.Size(), deviceExp)
 				if err != nil {
 					fmt.Printf("Cannot create device: %s\n", err)
 					os.Exit(1)

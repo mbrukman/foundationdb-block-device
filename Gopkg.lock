@@ -23,12 +23,20 @@
   version = "6.0.18"
 
 [[projects]]
+  digest = "1:6f9339c912bbdda81302633ad7e99a28dfa5a639c864061f1929510a9a64aa74"
+  name = "github.com/dustin/go-humanize"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "9f541cc9db5d55bce703bd99987c9d5cb8eea45e"
+  version = "v1.0.0"
+
+[[projects]]
   branch = "master"
-  digest = "1:a067f49ff1ac7d94e11876d371e38606f6d2831391ba59d62529f80322769b78"
+  digest = "1:1425444b57ed1c6a49fb781597dbd9ddeec44b933aca25b00cbb5028e6367d7c"
   name = "github.com/meln1k/buse-go"
   packages = ["buse"]
   pruneopts = "UT"
-  revision = "9d72deab4abc8e04da5820d13722dcf512a1afa0"
+  revision = "699575009e445b96f077a609c715547eb39ce49c"
 
 [[projects]]
   digest = "1:b24d38b282bacf9791408a080f606370efa3d364e4b5fd9ba0f7b87786d3b679"
@@ -46,6 +54,7 @@
     "github.com/apple/foundationdb/bindings/go/src/fdb",
     "github.com/apple/foundationdb/bindings/go/src/fdb/directory",
     "github.com/apple/foundationdb/bindings/go/src/fdb/tuple",
+    "github.com/dustin/go-humanize",
     "github.com/meln1k/buse-go/buse",
     "github.com/urfave/cli",
   ]

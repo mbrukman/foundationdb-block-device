@@ -130,12 +130,6 @@ func nbdReplyHeader(handle uint64, error uint32) []byte {
 	return buf
 }
 
-type workerJob struct {
-	jobType uint32
-	chunk   []byte
-	request *nbdRequest
-}
-
 // Connect connects a BuseDevice to an actual device file
 // and starts handling requests. It does not return until it's done serving requests.
 func (bd *BuseDevice) Connect() error {
@@ -149,20 +143,6 @@ func (bd *BuseDevice) Connect() error {
 	tmp.Close()
 	fp := os.NewFile(uintptr(bd.socketPair[0]), "unix")
 	mutex := &sync.Mutex{}
-
-	jobs := make(chan workerJob, bd.parallelism)
-
-	worker := func(requests <-chan workerJob) {
-		for job := range requests {
-			bd.op[job.jobType](bd.driver, fp, mutex, job.chunk, job.request)
-		}
-	}
-
-	for i := 0; i < bd.parallelism; i++ {
-		go worker(jobs)
-	}
-
-	log.Printf("started client with %d workers", bd.parallelism)
 
 	// Start handling requests
 	for true {
@@ -192,19 +172,15 @@ func (bd *BuseDevice) Connect() error {
 				return fmt.Errorf("Fatal error, cannot read request packet: %s", err)
 			}
 		}
-		job := workerJob{
-			jobType: request.Type,
-			chunk:   chunk,
-			request: &request,
-		}
+
 		// asynchronously handle the rest
-		jobs <- job
+		go bd.op[request.Type](bd.driver, fp, mutex, chunk, &request)
 	}
 	return nil
 }
 
-func CreateDevice(device string, size uint64, buseDriver BuseInterface, parallelism int) (*BuseDevice, error) {
-	buseDevice := &BuseDevice{size: size, device: device, driver: buseDriver, parallelism: parallelism}
+func CreateDevice(device string, blockSize int32, size uint64, buseDriver BuseInterface) (*BuseDevice, error) {
+	buseDevice := &BuseDevice{size: size, device: device, driver: buseDriver}
 	sockPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		return nil, fmt.Errorf("Call to socketpair failed: %s", err)
@@ -215,6 +191,7 @@ func CreateDevice(device string, size uint64, buseDriver BuseInterface, parallel
 	}
 	buseDevice.deviceFp = fp
 	ioctl(buseDevice.deviceFp.Fd(), NBD_SET_SIZE, uintptr(size))
+	ioctl(buseDevice.deviceFp.Fd(), NBD_SET_BLKSIZE, uintptr(blockSize))
 	ioctl(buseDevice.deviceFp.Fd(), NBD_CLEAR_QUE, 0)
 	ioctl(buseDevice.deviceFp.Fd(), NBD_CLEAR_SOCK, 0)
 	buseDevice.socketPair = sockPair
