@@ -120,6 +120,10 @@ func List(database fdb.Database) []ArrayDescription {
 	return result
 }
 
+func Exists(database fdb.Database, name string) (bool, error) {
+	return directory.Exists(database, []string{FDBArrayDirectoryName, name})
+}
+
 func (array FDBArray) readSingleBlockAsync(blockID uint64, tx fdb.ReadTransaction) fdb.FutureByteSlice {
 	return tx.Get(array.data.Pack(tuple.Tuple{blockID}))
 }

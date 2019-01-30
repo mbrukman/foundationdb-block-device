@@ -66,12 +66,6 @@ func (d FdbStorage) BlockSize() int32 {
 	return int32(d.array.BlockSize())
 }
 
-// func usage() {
-// 	fmt.Fprintf(os.Stderr, "usage: %s /dev/nbd0\n", os.Args[0])
-// 	flag.PrintDefaults()
-// 	os.Exit(2)
-// }
-
 func main() {
 
 	app := cli.NewApp()
@@ -83,7 +77,7 @@ func main() {
 	app.Commands = []cli.Command{
 		{
 			Name:      "create",
-			Usage:     "Creates a new volume",
+			Usage:     "Create a new volume",
 			ArgsUsage: "[volume name]",
 			Flags: []cli.Flag{
 				cli.IntFlag{
@@ -122,18 +116,27 @@ func main() {
 
 				fdb.MustAPIVersion(600)
 				db := fdb.MustOpenDefault()
+
 				size, sizeErr := units.ParseStrictBytes(c.String("size"))
 				if sizeErr != nil {
 					return cli.NewExitError("volume size is invalid", 1)
 				}
 				name := c.Args().Get(0)
+
+				alreadyExists, _ := fdbarray.Exists(db, name)
+
+				if alreadyExists {
+					return cli.NewExitError("volume already exists", 1)
+				}
+
 				CreateStorageVolume(db, name, uint32(blockSize), uint64(size))
+				fmt.Printf("volume %s of size %s is created\n", name, humanize.Bytes(uint64(size)))
 				return nil
 			},
 		},
 		{
 			Name:  "list",
-			Usage: "Lists all volumes",
+			Usage: "List all volumes",
 			Action: func(c *cli.Context) error {
 
 				fdb.MustAPIVersion(600)
@@ -151,7 +154,7 @@ func main() {
 		},
 		{
 			Name:      "connect",
-			Usage:     "Connects the specified volume at the provided device",
+			Usage:     "Connect the specified volume at the provided device",
 			ArgsUsage: "[volume name] [device name]",
 			Action: func(c *cli.Context) error {
 				if c.NArg() != 2 {
@@ -186,6 +189,30 @@ func main() {
 				// Received SIGTERM, cleanup
 				fmt.Println("SIGINT, disconnecting...")
 				device.Disconnect()
+
+				return nil
+			},
+		},
+		{
+			Name:      "delete",
+			Usage:     "Delete the specified ",
+			ArgsUsage: "[volume name]",
+			Action: func(c *cli.Context) error {
+				if c.NArg() != 1 {
+					return cli.NewExitError("volume name must me specified", 1)
+				}
+				volumeName := c.Args().Get(0)
+
+				fdb.MustAPIVersion(600)
+
+				// Open the default database from the system cluster
+				db := fdb.MustOpenDefault()
+
+				array := fdbarray.Open(db, volumeName)
+
+				array.Delete()
+
+				fmt.Printf("volume %s deleted\n", volumeName)
 
 				return nil
 			},
