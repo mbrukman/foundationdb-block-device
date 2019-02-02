@@ -249,6 +249,8 @@ func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startB
 
 	var maybeError error
 
+	var once sync.Once
+
 	var wg sync.WaitGroup
 
 	wg.Add(int(totalTransactions))
@@ -266,7 +268,11 @@ func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startB
 				}
 				return
 			})
-			maybeError = err
+			if err != nil {
+				once.Do(func() {
+					maybeError = err
+				})
+			}
 			wg.Done()
 			return
 		}(groupPosition)
@@ -311,9 +317,7 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 	var err error
 
 	if array.blocksPerTx == 0 || isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
-		if isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
-			log.Println("Non aligned write!")
-		}
+
 		_, txErr := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
 
 			firstBlockKey := array.data.Pack(tuple.Tuple{firstBlock})
