@@ -18,7 +18,7 @@ func setup() {
 	// Open the default database from the system cluster
 	db := fdb.MustOpenDefault()
 
-	fdbArray = Create(db, "fdbarray-test", 512, 10240, 16)
+	fdbArray = Create(db, "fdbarray-test", 512, 10240, 0)
 }
 
 func cleanup() {
@@ -82,18 +82,37 @@ func TestRandomReadWrite(t *testing.T) {
 
 }
 
-func BenchmarkRandomWrite(b *testing.B) {
-	b.SetParallelism(128)
+func BenchmarkWrite(b *testing.B) {
 
-	writeSize := 131072 * 4 // 512kb
+	bs := int(fdbArray.BlockSize())
+
+	write := make([]byte, bs)
+	for i := 0; i < bs; i++ {
+		write[i] = byte(i)
+	}
+
+	for n := 0; n < b.N; n++ {
+		fdbArray.Write(write, uint64(n*bs))
+	}
+}
+
+func BenchmarkRead(b *testing.B) {
+
+	bs := int(fdbArray.BlockSize())
+
+	writeSize := bs * b.N
 
 	write := make([]byte, writeSize)
 	for i := 0; i < writeSize; i++ {
 		write[i] = byte(i)
 	}
 
+	read := make([]byte, fdbArray.BlockSize())
+
+	fdbArray.Write(write, 0)
+
 	for n := 0; n < b.N; n++ {
-		fdbArray.Write(write, uint64(n*writeSize))
+		fdbArray.Read(read, uint64(n*bs))
 	}
 }
 

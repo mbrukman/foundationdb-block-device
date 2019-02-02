@@ -157,10 +157,10 @@ func main() {
 			Usage:     "Connect the specified volume at the provided device",
 			ArgsUsage: "[volume name] [device name]",
 			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "bpt",
-					Usage: "Number of blocks being writter per transaction. Smaller value will lead to lower latency and throughput, higher will increase throughput and latency",
-					Value: "4",
+				cli.UintFlag{
+					Name: "bpt",
+					Usage: "Number of blocks being writter per transaction in parallel. Smaller value will lead to lower latency and throughput," +
+						" higher will increase throughput and latency. Not specifying the value will lead to writing all requests in a single transaction",
 				},
 			},
 			Action: func(c *cli.Context) error {

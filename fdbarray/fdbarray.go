@@ -310,8 +310,10 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 
 	var err error
 
-	if isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
-		log.Println("Non aligned write!")
+	if array.blocksPerTx == 0 || isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
+		if isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
+			log.Println("Non aligned write!")
+		}
 		_, txErr := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
 
 			firstBlockKey := array.data.Pack(tuple.Tuple{firstBlock})
