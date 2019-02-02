@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"log"
 	"math"
+	"sync"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
@@ -24,8 +25,10 @@ type FDBArray struct {
 	metadata directory.DirectorySubspace
 	data     directory.DirectorySubspace
 
-	blockSize uint32
-	size      uint64
+	// keep everything as uint64 to avoid type casts
+	blockSize   uint64
+	size        uint64
+	blocksPerTx uint64
 }
 
 // Create a new array
@@ -33,7 +36,7 @@ type FDBArray struct {
 // name - name of the array
 // blockSize - size of the block in bytes
 // size - size of the volume in bytes
-func Create(database fdb.Database, name string, blockSize uint32, size uint64) FDBArray {
+func Create(database fdb.Database, name string, blockSize uint32, size uint64, blocksPerTransaction uint32) FDBArray {
 	subspace, err := directory.Create(database, []string{FDBArrayDirectoryName, name}, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -63,13 +66,21 @@ func Create(database fdb.Database, name string, blockSize uint32, size uint64) F
 		log.Fatal(err)
 	}
 
-	fdbArray := FDBArray{database, subspace, metadata, data, blockSize, size}
+	fdbArray := FDBArray{
+		database:    database,
+		subspace:    subspace,
+		metadata:    metadata,
+		data:        data,
+		blockSize:   uint64(blockSize),
+		size:        size,
+		blocksPerTx: uint64(blocksPerTransaction),
+	}
 
 	return fdbArray
 }
 
 // Open an already created array
-func Open(database fdb.Database, name string) FDBArray {
+func Open(database fdb.Database, name string, blocksPerTransaction uint32) FDBArray {
 	subspace, err := directory.Open(database, []string{FDBArrayDirectoryName, name}, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -95,31 +106,42 @@ func Open(database fdb.Database, name string) FDBArray {
 		return binary.BigEndian.Uint64(bytes), nil
 	})
 
-	fdbArray := FDBArray{database, subspace, metadata, data, blockSize.(uint32), size.(uint64)}
+	fdbArray := FDBArray{
+		database:    database,
+		subspace:    subspace,
+		metadata:    metadata,
+		data:        data,
+		blockSize:   uint64(blockSize.(uint32)),
+		size:        size.(uint64),
+		blocksPerTx: uint64(blocksPerTransaction),
+	}
 
 	return fdbArray
 }
 
+// Summary about the array
 type ArrayDescription struct {
 	VolumeName string
 	Size       uint64
 	BlockSize  uint32
 }
 
+// List all arrays
 func List(database fdb.Database) []ArrayDescription {
 	list, _ := directory.List(database, []string{FDBArrayDirectoryName})
 	result := make([]ArrayDescription, len(list))
 	for i, name := range list {
-		array := Open(database, name)
+		array := Open(database, name, 1)
 		result[i] = ArrayDescription{
 			VolumeName: name,
 			Size:       array.size,
-			BlockSize:  array.blockSize,
+			BlockSize:  uint32(array.blockSize),
 		}
 	}
 	return result
 }
 
+// Exists returns true if an array with the specified name exists in the database
 func Exists(database fdb.Database, name string) (bool, error) {
 	return directory.Exists(database, []string{FDBArrayDirectoryName, name})
 }
@@ -208,6 +230,73 @@ func isNotAlignedWrite(blockOffset uint64, length uint64, lastBlockLength uint64
 	return blockOffset > 0 || (blockOffset == 0 && length < blockSize) || (lastBlockLength != blockSize)
 }
 
+// performs a parellel write of a sequence of alighned blocks
+// args:
+// firstBlock - first block id
+// startBlock - id of the block where alighned sequence starts
+// endBlock - id of the block where we should stop (exclusive)
+func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startBlock uint64, endBlock uint64, shift uint64) error {
+	totalBlocksToWrite := (endBlock - startBlock)
+	completeGroups := (totalBlocksToWrite / array.blocksPerTx)
+	lastGroupSize := totalBlocksToWrite % array.blocksPerTx
+	incompleteLastGroup := lastGroupSize != 0
+	blockSize := uint64(array.blockSize)
+
+	var totalTransactions = completeGroups
+	if incompleteLastGroup {
+		totalTransactions++
+	}
+
+	var maybeError error
+
+	var wg sync.WaitGroup
+
+	wg.Add(int(totalTransactions))
+
+	for groupPosition := startBlock; groupPosition < startBlock+completeGroups*array.blocksPerTx; groupPosition += array.blocksPerTx {
+
+		go func(currentGroupPosition uint64) {
+			_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+				for i := currentGroupPosition; i < currentGroupPosition+array.blocksPerTx; i++ {
+
+					key := array.data.Pack(tuple.Tuple{i})
+					writeBlock := i - firstBlock
+					position := (writeBlock-1)*blockSize + shift
+					tx.Set(key, write[position:position+blockSize])
+				}
+				return
+			})
+			maybeError = err
+			wg.Done()
+			return
+		}(groupPosition)
+	}
+
+	if incompleteLastGroup {
+
+		go func() {
+			_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+
+				for i := startBlock + completeGroups*array.blocksPerTx; i < endBlock; i++ {
+					key := array.data.Pack(tuple.Tuple{i})
+					writeBlock := i - firstBlock
+					position := (writeBlock-1)*blockSize + shift
+					tx.Set(key, write[position:position+blockSize])
+				}
+
+				return
+			})
+			maybeError = err
+			wg.Done()
+			return
+		}()
+	}
+
+	wg.Wait()
+
+	return maybeError
+}
+
 func (array FDBArray) Write(write []byte, offset uint64) error {
 	blockSize := uint64(array.blockSize)
 	length := uint64(len(write))
@@ -219,64 +308,69 @@ func (array FDBArray) Write(write []byte, offset uint64) error {
 	lastBlockPosition := ((lastBlock-firstBlock-1)*blockSize + shift)
 	lastBlockLength := length - lastBlockPosition
 
+	var err error
+
 	if isNotAlignedWrite(blockOffset, length, lastBlockLength, blockSize) {
 		log.Println("Non aligned write!")
-	}
+		_, txErr := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
 
-	_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+			firstBlockKey := array.data.Pack(tuple.Tuple{firstBlock})
 
-		firstBlockKey := array.data.Pack(tuple.Tuple{firstBlock})
-
-		// Prefetch last and first blocks in parallel if needed to reduce overall latency
-		var maybeFirstBlockRead fdb.FutureByteSlice
-		if isFirstBlockPartial(blockOffset, length, blockSize) {
-			maybeFirstBlockRead = array.readSingleBlockAsync(firstBlock, tx)
-		}
-
-		var maybeLastBlockRead fdb.FutureByteSlice
-		if isLastBlockPartial(lastBlock, firstBlock, length, blockSize, shift) {
-			maybeLastBlockRead = array.readSingleBlockAsync(lastBlock, tx)
-		}
-
-		// While first and last blocks are being fetched, let's set the middle blocks
-		if lastBlock > firstBlock {
-			// blocks in the middle
-			for i := firstBlock + 1; i < lastBlock; i++ {
-				key := array.data.Pack(tuple.Tuple{i})
-				writeBlock := i - firstBlock
-				position := (writeBlock-1)*blockSize + shift
-				tx.Set(key, write[position:position+blockSize])
+			// Prefetch last and first blocks in parallel if needed to reduce overall latency
+			var maybeFirstBlockRead fdb.FutureByteSlice
+			if isFirstBlockPartial(blockOffset, length, blockSize) {
+				maybeFirstBlockRead = array.readSingleBlockAsync(firstBlock, tx)
 			}
 
-			lastBlockKey := array.data.Pack(tuple.Tuple{lastBlock})
-			// If the last block is a complete block we don't need to read
-			if lastBlockLength == blockSize {
-				tx.Set(lastBlockKey, write[lastBlockPosition:lastBlockPosition+blockSize])
-			} else {
-				lastBlockBytes := maybeLastBlockRead.MustGet()
+			var maybeLastBlockRead fdb.FutureByteSlice
+			if isLastBlockPartial(lastBlock, firstBlock, length, blockSize, shift) {
+				maybeLastBlockRead = array.readSingleBlockAsync(lastBlock, tx)
+			}
+
+			// While first and last blocks are being fetched, let's set the middle blocks
+			if lastBlock > firstBlock {
+				// blocks in the middle
+				for i := firstBlock + 1; i < lastBlock; i++ {
+					key := array.data.Pack(tuple.Tuple{i})
+					writeBlock := i - firstBlock
+					position := (writeBlock-1)*blockSize + shift
+					tx.Set(key, write[position:position+blockSize])
+				}
+
+				lastBlockKey := array.data.Pack(tuple.Tuple{lastBlock})
+				// If the last block is a complete block we don't need to read
+				if lastBlockLength == blockSize {
+					tx.Set(lastBlockKey, write[lastBlockPosition:lastBlockPosition+blockSize])
+				} else {
+					lastBlockBytes := maybeLastBlockRead.MustGet()
+					buf := make([]byte, blockSize)
+					copy(buf, lastBlockBytes)
+					copy(buf, write[lastBlockPosition:lastBlockPosition+lastBlockLength])
+					tx.Set(lastBlockKey, buf)
+				}
+			}
+
+			// first block should be fetched by now, let's set it too
+			if isFirstBlockPartial(blockOffset, length, blockSize) {
+				// Only need to do this if the first block is partial
+				readBytes := maybeFirstBlockRead.MustGet()
 				buf := make([]byte, blockSize)
-				copy(buf, lastBlockBytes)
-				copy(buf, write[lastBlockPosition:lastBlockPosition+lastBlockLength])
-				tx.Set(lastBlockKey, buf)
+				copy(buf, readBytes)
+				writeLength := uint64(math.Min(float64(length), float64(shift)))
+				copy(buf[blockOffset:blockOffset+writeLength], write[0:writeLength])
+				tx.Set(firstBlockKey, buf)
+			} else {
+				// In this case copy the full first block blindly
+				tx.Set(firstBlockKey, write[0:blockSize])
 			}
-		}
 
-		// first block should be fetched by now, let's set it too
-		if isFirstBlockPartial(blockOffset, length, blockSize) {
-			// Only need to do this if the first block is partial
-			readBytes := maybeFirstBlockRead.MustGet()
-			buf := make([]byte, blockSize)
-			copy(buf, readBytes)
-			writeLength := uint64(math.Min(float64(length), float64(shift)))
-			copy(buf[blockOffset:blockOffset+writeLength], write[0:writeLength])
-			tx.Set(firstBlockKey, buf)
-		} else {
-			// In this case copy the full first block blindly
-			tx.Set(firstBlockKey, write[0:blockSize])
-		}
+			return
+		})
 
-		return
-	})
+		err = txErr
+	} else {
+		err = array.writeAlignedBlocks(write, firstBlock, firstBlock, lastBlock+1, shift)
+	}
 
 	if err != nil {
 		log.Fatal(err)
@@ -312,6 +406,7 @@ func (array FDBArray) Size() uint64 {
 	return array.size
 }
 
+// BlockSize of the underlying array
 func (array FDBArray) BlockSize() uint32 {
-	return array.blockSize
+	return uint32(array.blockSize)
 }

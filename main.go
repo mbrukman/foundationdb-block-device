@@ -24,13 +24,13 @@ type FdbStorage struct {
 	array fdbarray.FDBArray
 }
 
-func CreateStorageVolume(database fdb.Database, name string, blockSize uint32, size uint64) FdbStorage {
-	array := fdbarray.Create(database, name, blockSize, size)
+func CreateStorageVolume(database fdb.Database, name string, blockSize uint32, size uint64, blocksPerTransaction uint32) FdbStorage {
+	array := fdbarray.Create(database, name, blockSize, size, blocksPerTransaction)
 	return FdbStorage{array: array}
 }
 
-func OpenStorageVolume(database fdb.Database, name string) FdbStorage {
-	array := fdbarray.Open(database, name)
+func OpenStorageVolume(database fdb.Database, name string, blocksPerTransaction uint32) FdbStorage {
+	array := fdbarray.Open(database, name, blocksPerTransaction)
 	return FdbStorage{array: array}
 }
 
@@ -129,7 +129,7 @@ func main() {
 					return cli.NewExitError("volume already exists", 1)
 				}
 
-				CreateStorageVolume(db, name, uint32(blockSize), uint64(size))
+				CreateStorageVolume(db, name, uint32(blockSize), uint64(size), 1)
 				fmt.Printf("volume %s of size %s is created\n", name, humanize.Bytes(uint64(size)))
 				return nil
 			},
@@ -156,19 +156,27 @@ func main() {
 			Name:      "connect",
 			Usage:     "Connect the specified volume at the provided device",
 			ArgsUsage: "[volume name] [device name]",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "bpt",
+					Usage: "Number of blocks being writter per transaction. Smaller value will lead to lower latency and throughput, higher will increase throughput and latency",
+					Value: "4",
+				},
+			},
 			Action: func(c *cli.Context) error {
 				if c.NArg() != 2 {
 					return cli.NewExitError("volume name and device must me specified", 1)
 				}
 				volumeName := c.Args().Get(0)
 				blockDeviceName := c.Args().Get(1)
+				blocksPerTransaction := c.Uint("bpt")
 
 				fdb.MustAPIVersion(600)
 
 				// Open the default database from the system cluster
 				db := fdb.MustOpenDefault()
 
-				deviceExp := OpenStorageVolume(db, volumeName)
+				deviceExp := OpenStorageVolume(db, volumeName, uint32(blocksPerTransaction))
 
 				device, err := buse.CreateDevice(blockDeviceName, deviceExp.BlockSize(), deviceExp.Size(), deviceExp)
 				if err != nil {
@@ -208,7 +216,7 @@ func main() {
 				// Open the default database from the system cluster
 				db := fdb.MustOpenDefault()
 
-				array := fdbarray.Open(db, volumeName)
+				array := fdbarray.Open(db, volumeName, 1)
 
 				array.Delete()
 
