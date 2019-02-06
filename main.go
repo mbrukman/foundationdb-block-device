@@ -13,7 +13,7 @@ import (
 	"github.com/meln1k/buse-go/buse"
 	"github.com/meln1k/foundationdb-block-device/fdbarray"
 
-	"github.com/dustin/go-humanize"
+	humanize "github.com/dustin/go-humanize"
 
 	"github.com/urfave/cli"
 )
@@ -45,16 +45,16 @@ func (d FdbStorage) WriteAt(p []byte, off uint64) error {
 }
 
 func (d FdbStorage) Disconnect() {
-	log.Println("[DeviceExample] DISCONNECT")
+	log.Println("[fdbbd] DISCONNECT")
 }
 
 func (d FdbStorage) Flush() error {
-	log.Println("[DeviceExample] FLUSH")
+	log.Println("[fdbbd] FLUSH is not needed")
 	return nil
 }
 
 func (d FdbStorage) Trim(off uint64, length uint32) error {
-	log.Printf("[DeviceExample] TRIM offset:%d len:%d\n", off, length)
+	log.Printf("[fdbbd] TRIM is not implemented")
 	return nil
 }
 
@@ -153,14 +153,14 @@ func main() {
 			},
 		},
 		{
-			Name:      "connect",
-			Usage:     "Connect the specified volume at the provided device",
+			Name:      "attach",
+			Usage:     "Attach the volume",
 			ArgsUsage: "[volume name] [device name]",
 			Flags: []cli.Flag{
 				cli.UintFlag{
 					Name: "bpt",
-					Usage: "Number of blocks being writter per transaction in parallel. Smaller value will lead to lower latency and throughput," +
-						" higher will increase throughput and latency. Not specifying the value will lead to writing all requests in a single transaction",
+					Usage: "Number of blocks being written per transaction in parallel. Smaller value will lead to lower latency and throughput," +
+						" higher will increase throughput and latency. Not specifying the value will lead to writing all blocks of the NBD request in a single transaction",
 				},
 			},
 			Action: func(c *cli.Context) error {
@@ -203,7 +203,7 @@ func main() {
 		},
 		{
 			Name:      "delete",
-			Usage:     "Delete the specified ",
+			Usage:     "Delete the volume",
 			ArgsUsage: "[volume name]",
 			Action: func(c *cli.Context) error {
 				if c.NArg() != 1 {
