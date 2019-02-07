@@ -62,7 +62,7 @@ $ sudo modprobe nbd
 ```
 5. Attach the volume to the system:
 ```sh
-sudo ./fdbbd connect --bpt 4 myvolume /dev/nbd0
+sudo ./fdbbd attach --bpt 4 myvolume /dev/nbd0
 ```
 6. Create a directory to mount the volume:
 ```sh
