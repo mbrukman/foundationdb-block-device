@@ -10,7 +10,7 @@ Inspired by [spullara/nbd](https://github.com/spullara/nbd)
 ## Is it fast?
 I did a small benchmark using a FoundationDB cluster of 2 nodes (linux running on macbooks with SSDs, 
 not tuned for FDB at all).
-FIO benchmark on 1GB file resulted in 10K random read/write IOPS and the latency was below 10ms.
+FIO benchmark on 1GB file resulted in 10K random read/write IOPS and the latency was below 10ms (direct io was used).
 While doing sequential reads it was able to saturate 1Gbit network link.
 
 Postrgres running in virtualbox showed 900 TPS on TPC-B pgbench workload with a database of size 1g.
