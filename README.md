@@ -3,14 +3,15 @@ Replicated Block Device backed by FoundationDB
 
 ## What is this
 This is an implementation of a block device in userspace which uses FoundationDB as a backend.
-Such combination allows to bring extreme fault tolerance to legacy applications without changing them.
+It provides a replicated block device for non-replicated workloads so they 
+can benefit from transparent block-level replication and enhanced fault tolerance.
 
 Inspired by [spullara/nbd](https://github.com/spullara/nbd)
 
 ## Is it fast?
 I did a small benchmark using a FoundationDB cluster of 2 nodes (linux running on macbooks with SSDs, 
 not tuned for FDB at all).
-FIO benchmark on 1GB file resulted in 10K random read/write IOPS and the latency was below 10ms (direct io was used).
+FIO benchmark on 1GB file resulted in 10K random read/write IOPS in 4KB blocks and the latency was below 10ms (direct io was used).
 While doing sequential reads it was able to saturate 1Gbit network link.
 
 Postrgres running in virtualbox showed 900 TPS on TPC-B pgbench workload with a database of size 1g.
@@ -68,11 +69,15 @@ sudo ./fdbbd attach --bpt 4 myvolume /dev/nbd0
 ```sh
 mkdir nbdmount
 ```
-7. Mount the attached volume:
+7. Create a file system on your block device. XFS is a good option:
+```sh
+sudo mkfs.xfs /dev/nbd0
+```
+8. Mount the attached volume:
 ```sh
 sudo mount /dev/nbd0 nbdmount/
 ```
-8. Done! You have a replicated volume!
+9. Done! You have a replicated volume!
 
 ## What's inside
 This project uses Network Block Device kernel module underneath. A unix pipe is used to talk to a kernel,
@@ -87,4 +92,4 @@ There are a few features planned in future releases, ordered by importance:
 4. Snapshots
 5. Volume size estimation (using roaring bitmaps or similar)
 6. Client-side encryption
-7. Control pane 
+7. Control panel
