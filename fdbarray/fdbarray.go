@@ -2,6 +2,7 @@ package fdbarray
 
 import (
 	"encoding/binary"
+	"errors"
 	"log"
 	"math"
 	"sync"
@@ -17,6 +18,7 @@ const (
 	DataDirectoryName     = "data"
 	BlockSizeKey          = "bs"
 	SizeKey               = "size"
+	LeaseTokenKey         = "lt"
 )
 
 type FDBArray struct {
@@ -29,6 +31,9 @@ type FDBArray struct {
 	blockSize   uint64
 	size        uint64
 	blocksPerTx uint64
+
+	// token to protect block device from concurrent mount
+	leaseToken uint64
 }
 
 // Create a new array
@@ -80,7 +85,7 @@ func Create(database fdb.Database, name string, blockSize uint32, size uint64, b
 }
 
 // Open an already created array
-func Open(database fdb.Database, name string, blocksPerTransaction uint32) FDBArray {
+func Open(database fdb.Database, name string, blocksPerTransaction uint32, leaseToken int64) FDBArray {
 	subspace, err := directory.Open(database, []string{FDBArrayDirectoryName, name}, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -131,7 +136,7 @@ func List(database fdb.Database) []ArrayDescription {
 	list, _ := directory.List(database, []string{FDBArrayDirectoryName})
 	result := make([]ArrayDescription, len(list))
 	for i, name := range list {
-		array := Open(database, name, 1)
+		array := Open(database, name, 1, 0)
 		result[i] = ArrayDescription{
 			VolumeName: name,
 			Size:       array.size,
@@ -230,6 +235,22 @@ func isNotAlignedWrite(blockOffset uint64, length uint64, lastBlockLength uint64
 	return blockOffset > 0 || (blockOffset == 0 && length < blockSize) || (lastBlockLength != blockSize)
 }
 
+func (array FDBArray) readLeaseTokenAsync(tx fdb.Transaction) fdb.FutureByteSlice {
+	key := array.metadata.Pack(tuple.Tuple{LeaseTokenKey})
+	return tx.Get(key)
+}
+
+func checkLeaseAndHandleTx(tokenFuture fdb.FutureByteSlice, expectedToken uint64, tx fdb.Transaction) error {
+	tokenBytes := tokenFuture.MustGet()
+
+	if binary.BigEndian.Uint64(tokenBytes) != expectedToken {
+		tx.Cancel()
+		return errors.New("stale_lease_token")
+	}
+
+	return nil
+}
+
 // performs a parellel write of a sequence of alighned blocks
 // args:
 // firstBlock - first block id
@@ -259,6 +280,8 @@ func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startB
 
 		go func(currentGroupPosition uint64) {
 			_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+				tokenFuture := array.readLeaseTokenAsync(tx)
+
 				for i := currentGroupPosition; i < currentGroupPosition+array.blocksPerTx; i++ {
 
 					key := array.data.Pack(tuple.Tuple{i})
@@ -266,6 +289,9 @@ func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startB
 					position := (writeBlock-1)*blockSize + shift
 					tx.Set(key, write[position:position+blockSize])
 				}
+
+				err = checkLeaseAndHandleTx(tokenFuture, array.leaseToken, tx)
+
 				return
 			})
 			if err != nil {
@@ -282,6 +308,7 @@ func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startB
 
 		go func() {
 			_, err := array.database.Transact(func(tx fdb.Transaction) (ret interface{}, err error) {
+				tokenFuture := array.readLeaseTokenAsync(tx)
 
 				for i := startBlock + completeGroups*array.blocksPerTx; i < endBlock; i++ {
 					key := array.data.Pack(tuple.Tuple{i})
@@ -289,6 +316,8 @@ func (array FDBArray) writeAlignedBlocks(write []byte, firstBlock uint64, startB
 					position := (writeBlock-1)*blockSize + shift
 					tx.Set(key, write[position:position+blockSize])
 				}
+
+				err = checkLeaseAndHandleTx(tokenFuture, array.leaseToken, tx)
 
 				return
 			})

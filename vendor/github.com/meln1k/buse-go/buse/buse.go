@@ -21,8 +21,7 @@ func opDeviceRead(driver BuseInterface, fp *os.File, mutex *sync.Mutex, chunk []
 	var error uint32
 	if err := driver.ReadAt(chunk, request.Offset); err != nil {
 		log.Println("buseDriver.ReadAt returned an error:", err)
-		// Reply with an EPERM
-		error = 1
+		error = EIO
 	}
 	header := nbdReplyHeader(request.Handle, error)
 	mutex.Lock()

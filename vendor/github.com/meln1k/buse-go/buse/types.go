@@ -1,6 +1,7 @@
 package buse
 
 import (
+	"fmt"
 	"os"
 	"sync"
 )
@@ -41,6 +42,28 @@ const (
 	NBD_REQUEST_MAGIC = 0x25609513
 	NBD_REPLY_MAGIC   = 0x67446698
 )
+
+const (
+	EPERM     = 1   // Operation not permitted.
+	EIO       = 5   // Input/output error.
+	ENOMEM    = 12  // Cannot allocate memory.
+	EINVAL    = 22  // Invalid argument.
+	ENOSPC    = 28  // No space left on device.
+	EOVERFLOW = 75  // Value too large.
+	ESHUTDOWN = 108 // Server is in the process of being shut down.
+)
+
+type NbdError struct {
+	value uint32
+}
+
+func (e NbdError) Error() string {
+	return fmt.Sprintf("NBD server error: %d", e.value)
+}
+
+func NewNbdError(value uint32) NbdError {
+	return NbdError{value}
+}
 
 type nbdRequest struct {
 	Magic  uint32
